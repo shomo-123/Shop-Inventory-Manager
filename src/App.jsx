@@ -13,8 +13,6 @@ import {
   X,
   Image as ImageIcon,
   Download,
-  Sparkles,
-  Bot,
   ShoppingCart,
   Trash2,
   Printer,
@@ -29,7 +27,9 @@ import {
   Link as LinkIcon,
   Smartphone,
   Share,
-  MoreVertical
+  MoreVertical,
+  Edit,
+  Ruler
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -65,34 +65,7 @@ import {
   setDoc
 } from 'firebase/firestore';
 
-// --- Gemini API Helper ---
-// Get your free key from https://aistudio.google.com/
-const GEMINI_API_KEY = ""; 
-
-const callGeminiAPI = async (prompt) => {
-  if (!GEMINI_API_KEY) return "AI Key missing. Please add it in the code.";
-  try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }]
-        })
-      }
-    );
-    if (!response.ok) throw new Error('API Request failed');
-    const data = await response.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || "Could not generate response.";
-  } catch (error) {
-    console.error("Gemini API Error:", error);
-    return "AI Service is currently unavailable.";
-  }
-};
-
 // --- Firebase Configuration ---
-// UPDATED: I have filled this in with the data from your screenshot
 const firebaseConfig = {
   apiKey: "AIzaSyBRP9UQ-HpHkTqdWvxfZcoJwrsrKvtsEZ8",
   authDomain: "shop-inventory-manager-12b0f.firebaseapp.com",
@@ -110,8 +83,30 @@ const db = getFirestore(app);
 const googleProvider = new GoogleAuthProvider();
 googleProvider.addScope('https://www.googleapis.com/auth/spreadsheets');
 
-// Static App ID for data separation
-const appId = 'electroshop-v1';
+const appId = 'shop-inventory-v2';
+
+// --- Helper: Auto Sync to Google Sheets ---
+const autoSyncToSheet = async (googleToken, sheetId, rowData) => {
+  if (!googleToken || !sheetId) return; 
+  try {
+    await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Sheet1!A1:append?valueInputOption=USER_ENTERED`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${googleToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          values: [rowData]
+        })
+      }
+    );
+    console.log("Auto-synced to sheet");
+  } catch (err) {
+    console.error("Sheet Sync Error:", err);
+  }
+};
 
 // --- Main App Component ---
 export default function App() {
@@ -134,7 +129,7 @@ export default function App() {
              if (docSnap.exists()) {
                setStoreProfile(docSnap.data());
              } else {
-               setStoreProfile({ storeName: 'My Electrical Shop', address: 'Main Market', phone: '', gstin: '', sheetId: '' });
+               setStoreProfile({ storeName: 'My Shop', address: '', phone: '', gstin: '', sheetId: '' });
              }
            } catch (e) { console.error("Profile fetch error", e); }
         };
@@ -145,13 +140,6 @@ export default function App() {
       }
     });
     return () => unsubscribe();
-  }, []);
-
-  // Notification Permission
-  useEffect(() => {
-    if ('Notification' in window && Notification.permission !== 'granted') {
-      Notification.requestPermission();
-    }
   }, []);
 
   if (loading) {
@@ -184,6 +172,18 @@ function LoginScreen({ setGoogleToken }) {
   const [error, setError] = useState('');
   const [loggingIn, setLoggingIn] = useState(false);
 
+  const handleDemoLogin = async () => {
+    setLoggingIn(true);
+    setError('');
+    try {
+      await signInAnonymously(auth);
+    } catch (err) {
+      console.error("Anonymous Auth Error:", err);
+      setError("Demo login failed.");
+      setLoggingIn(false);
+    }
+  };
+
   const handleGoogleLogin = async () => {
     setLoggingIn(true);
     setError('');
@@ -193,10 +193,9 @@ function LoginScreen({ setGoogleToken }) {
       if (credential?.accessToken) setGoogleToken(credential.accessToken);
     } catch (err) {
       console.error("Auth Error:", err);
-      // Fallback for unauthorized domains (like localhost or preview)
       if (err.code === 'auth/unauthorized-domain' || err.code === 'auth/operation-not-allowed') {
-        setError("Domain not authorized in Firebase Console. Logging in as Demo User...");
-        setTimeout(() => signInAnonymously(auth).catch(() => setLoggingIn(false)), 1500);
+        setError("Domain not authorized. Switching to Demo Mode...");
+        handleDemoLogin();
       } else {
         setError(`Login Failed: ${err.message}`);
         setLoggingIn(false);
@@ -212,7 +211,7 @@ function LoginScreen({ setGoogleToken }) {
             <ArrowUpCircle className="text-slate-900 w-8 h-8" />
           </div>
         </div>
-        <h2 className="text-2xl font-bold text-white mb-2">ElectroManager Pro</h2>
+        <h2 className="text-2xl font-bold text-white mb-2">Shop Inventory Manager</h2>
         <p className="text-slate-400 mb-8">Secure Inventory & Billing System</p>
         
         {error && (
@@ -226,14 +225,18 @@ function LoginScreen({ setGoogleToken }) {
           disabled={loggingIn}
           className="w-full bg-white hover:bg-slate-100 text-slate-900 font-bold py-3 rounded-lg transition-colors flex items-center justify-center gap-3 disabled:opacity-70 disabled:cursor-not-allowed"
         >
-          {loggingIn ? (
-            <span className="animate-pulse">Connecting...</span>
-          ) : (
-            <>
-              Sign in with Google
-            </>
-          )}
+          {loggingIn ? <span className="animate-pulse">Connecting...</span> : <>Sign in with Google</>}
         </button>
+
+        <div className="mt-4 border-t border-slate-700 pt-4">
+          <button 
+            onClick={handleDemoLogin}
+            disabled={loggingIn}
+            className="text-slate-400 hover:text-white text-sm underline decoration-dashed underline-offset-4"
+          >
+            Skip & Use Demo Mode
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -252,13 +255,6 @@ function DashboardLayout({ user, view, setView, storeProfile, setStoreProfile, g
 
     const unsubInv = onSnapshot(invRef, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      // Simple Notification Logic
-      if (Notification.permission === 'granted') {
-        const critical = data.find(i => i.quantity <= (i.minStock || 5) && i.quantity > 0);
-        if (critical) {
-           // In real app, debounce this so it doesn't spam on refresh
-        }
-      }
       setInventory(data);
     });
 
@@ -278,7 +274,9 @@ function DashboardLayout({ user, view, setView, storeProfile, setStoreProfile, g
     <button
       onClick={() => { setView(id); setIsMobileMenuOpen(false); }}
       className={`flex items-center space-x-3 w-full p-3 rounded-lg transition-colors ${
-        view === id ? 'bg-yellow-500 text-slate-900 font-bold' : 'text-slate-300 hover:bg-slate-800'
+        view === id 
+          ? 'bg-yellow-500 text-slate-900 font-bold' 
+          : 'text-slate-300 hover:bg-slate-800'
       }`}
     >
       <Icon size={20} />
@@ -293,8 +291,8 @@ function DashboardLayout({ user, view, setView, storeProfile, setStoreProfile, g
         <div className="flex items-center space-x-2 mb-8 px-2">
           <div className="bg-yellow-500 p-1.5 rounded-lg"><ArrowUpCircle className="text-slate-900 w-6 h-6" /></div>
           <div>
-            <h1 className="text-base font-bold text-white leading-none">{storeProfile?.storeName || "ElectroShop"}</h1>
-            <span className="text-[10px] text-slate-500 uppercase tracking-widest">Manager</span>
+            <h1 className="text-base font-bold text-white leading-none">{storeProfile?.storeName || "Shop Manager"}</h1>
+            <span className="text-[10px] text-slate-500 uppercase tracking-widest">Admin Panel</span>
           </div>
         </div>
         <nav className="flex-1 space-y-2">
@@ -319,7 +317,7 @@ function DashboardLayout({ user, view, setView, storeProfile, setStoreProfile, g
 
       {/* Mobile Header */}
       <div className="md:hidden fixed top-0 w-full bg-slate-950 border-b border-slate-800 z-50 px-4 py-3 flex justify-between items-center">
-        <span className="font-bold text-lg text-yellow-500">{storeProfile?.storeName || "ElectroShop"}</span>
+        <span className="font-bold text-lg text-yellow-500">{storeProfile?.storeName || "Shop Manager"}</span>
         <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>{isMobileMenuOpen ? <X /> : <Menu />}</button>
       </div>
 
@@ -341,8 +339,8 @@ function DashboardLayout({ user, view, setView, storeProfile, setStoreProfile, g
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto md:p-8 p-4 pt-20 md:pt-8 bg-slate-900">
         {view === 'dashboard' && <DashboardView inventory={inventory} lowStockItems={lowStockItems} totalValue={totalValue} transactions={transactions} storeProfile={storeProfile} />}
-        {view === 'billing' && <BillingView user={user} inventory={inventory} storeProfile={storeProfile} />}
-        {view === 'inventory' && <InventoryView user={user} inventory={inventory} />}
+        {view === 'billing' && <BillingView user={user} inventory={inventory} storeProfile={storeProfile} googleToken={googleToken} />}
+        {view === 'inventory' && <InventoryView user={user} inventory={inventory} googleToken={googleToken} storeProfile={storeProfile} />}
         {view === 'transactions' && <TransactionsView transactions={transactions} />}
         {view === 'reports' && <ReportsView transactions={transactions} inventory={inventory} />}
         {view === 'settings' && <SettingsView user={user} storeProfile={storeProfile} setStoreProfile={setStoreProfile} googleToken={googleToken} transactions={transactions} />}
@@ -354,52 +352,15 @@ function DashboardLayout({ user, view, setView, storeProfile, setStoreProfile, g
 // --- VIEWS ---
 
 function DashboardView({ inventory, lowStockItems, totalValue, transactions, storeProfile }) {
-  const [aiAnalysis, setAiAnalysis] = useState("");
-  const [analyzing, setAnalyzing] = useState(false);
-
-  const runAnalysis = async () => {
-    setAnalyzing(true);
-    const lowStockNames = lowStockItems.map(i => `${i.name}`).join(', ');
-    const recentSales = transactions.filter(t => t.type === 'out').slice(0, 5).map(t => `${t.quantity}x ${t.itemName}`).join(', ');
-    const prompt = `AI Advisor for electrical shop "${storeProfile?.storeName}". Date: ${new Date().toLocaleDateString()}. Data: Low Stock: ${lowStockNames}. Recent Sales: ${recentSales}. Give 3 short, actionable tips.`;
-    const result = await callGeminiAPI(prompt);
-    setAiAnalysis(result);
-    setAnalyzing(false);
-  };
-
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
       <div className="flex justify-between items-end">
         <div>
-           <h2 className="text-2xl font-bold text-white mb-1">Welcome, Owner</h2>
+           <h2 className="text-2xl font-bold text-white mb-1">Welcome</h2>
            <p className="text-slate-400 text-sm">Overview for {storeProfile?.storeName || "your shop"}</p>
         </div>
       </div>
       
-      {/* AI Advisor */}
-      <div className="bg-gradient-to-r from-indigo-900 to-slate-900 p-6 rounded-xl border border-indigo-700/50 relative overflow-hidden">
-        <div className="relative z-10">
-          <div className="flex justify-between items-start mb-4">
-            <div className="flex items-center gap-2">
-              <Bot className="text-indigo-400" size={24} />
-              <h3 className="text-lg font-bold text-white">AI Shop Advisor</h3>
-            </div>
-            {!aiAnalysis && (
-              <button onClick={runAnalysis} disabled={analyzing} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-50">
-                {analyzing ? <span className="animate-spin">⏳</span> : <Sparkles size={16} />} Analyze
-              </button>
-            )}
-          </div>
-          {aiAnalysis && (
-            <div className="bg-slate-900/50 p-4 rounded-lg border border-indigo-500/30">
-              <p className="whitespace-pre-line text-slate-200 text-sm leading-relaxed">{aiAnalysis}</p>
-              <button onClick={runAnalysis} className="mt-3 text-xs text-indigo-400 flex items-center gap-1"><Sparkles size={12} /> Refresh</button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-slate-800 p-6 rounded-xl border border-slate-700">
            <p className="text-slate-400 text-sm">Total Value</p>
@@ -415,9 +376,11 @@ function DashboardView({ inventory, lowStockItems, totalValue, transactions, sto
         </div>
       </div>
 
-      {/* Activity */}
-      <div className="bg-slate-800 rounded-xl border border-slate-700">
-        <div className="p-4 border-b border-slate-700"><h3 className="font-semibold text-slate-200">Recent Activity</h3></div>
+      {/* Recent Activity */}
+      <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+        <div className="p-4 border-b border-slate-700">
+          <h3 className="font-semibold text-slate-200">Recent Activity</h3>
+        </div>
         <div className="divide-y divide-slate-700">
           {transactions.slice(0, 5).map(t => (
             <div key={t.id} className="p-4 flex justify-between items-center">
@@ -425,19 +388,21 @@ function DashboardView({ inventory, lowStockItems, totalValue, transactions, sto
                 <p className="text-white font-medium">{t.itemName}</p>
                 <p className="text-xs text-slate-500">{new Date(t.date?.seconds * 1000).toLocaleString()}</p>
               </div>
-              <div className={`px-3 py-1 rounded-full text-xs font-bold ${t.type === 'in' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+              <div className={`px-3 py-1 rounded-full text-xs font-bold ${
+                t.type === 'in' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+              }`}>
                 {t.type === 'in' ? '+' : '-'}{t.quantity}
               </div>
             </div>
           ))}
-          {transactions.length === 0 && <p className="p-4 text-slate-500 text-center text-sm">No recent activity</p>}
+          {transactions.length === 0 && <p className="p-4 text-slate-500 text-center text-sm">No recent transactions</p>}
         </div>
       </div>
     </div>
   );
 }
 
-function InventoryView({ user, inventory }) {
+function InventoryView({ user, inventory, googleToken, storeProfile }) {
   const [showAdd, setShowAdd] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [editingItem, setEditingItem] = useState(null);
@@ -462,15 +427,31 @@ function InventoryView({ user, inventory }) {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pb-20">
         {filtered.map(item => (
-          <InventoryCard key={item.id} item={item} user={user} onEdit={() => { setEditingItem(item); setShowAdd(true); }} />
+          <InventoryCard 
+            key={item.id} 
+            item={item} 
+            user={user} 
+            googleToken={googleToken} 
+            sheetId={storeProfile?.sheetId}
+            onEdit={() => { setEditingItem(item); setShowAdd(true); }} 
+          />
         ))}
       </div>
-      {(showAdd || editingItem) && <ItemModal user={user} onClose={() => { setShowAdd(false); setEditingItem(null); }} initialData={editingItem} />}
+      {(showAdd || editingItem) && (
+        <ItemModal 
+          key={editingItem ? editingItem.id : 'new'} // FORCE RESET ON OPEN
+          user={user} 
+          onClose={() => { setShowAdd(false); setEditingItem(null); }} 
+          initialData={editingItem} 
+          googleToken={googleToken} 
+          sheetId={storeProfile?.sheetId}
+        />
+      )}
     </div>
   );
 }
 
-function InventoryCard({ item, user, onEdit }) {
+function InventoryCard({ item, user, onEdit, googleToken, sheetId }) {
   const handleStock = async (type) => {
     const qty = parseInt(prompt(`Quantity to ${type === 'in' ? 'ADD' : 'REMOVE'}:`));
     if (isNaN(qty) || qty <= 0) return;
@@ -479,27 +460,40 @@ function InventoryCard({ item, user, onEdit }) {
     try {
       const newQty = type === 'in' ? item.quantity + qty : item.quantity - qty;
       await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'inventory', item.id), { quantity: newQty });
-      await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'transactions'), {
+      
+      const transData = {
         itemId: item.id, itemName: item.name, type, quantity: qty, priceAtTime: item.price, date: serverTimestamp()
-      });
+      };
+      await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'transactions'), transData);
+
+      const row = [new Date().toISOString(), 'Manual-Update', item.name, type, qty, item.price, 'Stock Update'];
+      autoSyncToSheet(googleToken, sheetId, row);
+
     } catch (e) { alert("Error updating stock"); }
   };
 
   return (
-    <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden flex flex-col">
-      <div className="h-32 bg-slate-700 relative group">
+    <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden flex flex-col relative group">
+      <button 
+        onClick={onEdit} 
+        className="absolute top-2 right-2 z-10 bg-slate-900/80 text-white p-2 rounded-full hover:bg-blue-600 transition-colors shadow-lg border border-slate-600"
+      >
+        <Edit size={16} />
+      </button>
+
+      <div className="h-32 bg-slate-700 relative">
         {item.image ? <img src={item.image} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-slate-500"><ImageIcon size={32} /></div>}
-        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-          <button onClick={onEdit} className="text-white bg-slate-600 px-3 py-1 rounded text-sm">Edit</button>
-        </div>
+        {item.isWire && (
+          <div className="absolute bottom-2 left-2 bg-blue-600 text-white text-xs px-2 py-1 rounded shadow">Wire / Meter</div>
+        )}
       </div>
       <div className="p-4 flex-1">
         <div className="flex justify-between items-start mb-2">
           <div><h3 className="font-bold text-white">{item.name}</h3><span className="text-xs text-slate-400">{item.category}</span></div>
-          <span className="text-green-400 font-bold">₹{item.price}</span>
+          <span className="text-green-400 font-bold">₹{item.price}/{item.isWire ? 'm' : 'pc'}</span>
         </div>
         <div className="flex justify-between items-center mt-4 bg-slate-900 p-2 rounded-lg">
-          <span className={`text-sm font-bold ${item.quantity <= item.minStock ? 'text-red-500' : 'text-white'}`}>Stock: {item.quantity}</span>
+          <span className={`text-sm font-bold ${item.quantity <= item.minStock ? 'text-red-500' : 'text-white'}`}>Stock: {item.quantity} {item.isWire ? 'm' : ''}</span>
           <div className="flex gap-1">
             <button onClick={() => handleStock('out')} className="p-1 bg-red-500/20 text-red-500 rounded"><ArrowDownCircle size={20} /></button>
             <button onClick={() => handleStock('in')} className="p-1 bg-green-500/20 text-green-500 rounded"><ArrowUpCircle size={20} /></button>
@@ -510,9 +504,15 @@ function InventoryCard({ item, user, onEdit }) {
   );
 }
 
-function ItemModal({ user, onClose, initialData }) {
-  const [data, setData] = useState(initialData || { name: '', category: 'General', price: 0, quantity: 0, minStock: 5, image: '', description: '' });
+function ItemModal({ user, onClose, initialData, googleToken, sheetId }) {
+  const [data, setData] = useState(initialData || { 
+    name: '', category: 'General', price: 0, quantity: 0, minStock: 5, image: '', description: '', isWire: false 
+  });
   const [loading, setLoading] = useState(false);
+  // Helper states for Coil Calculator
+  const [coilQty, setCoilQty] = useState('');
+  const [coilLen, setCoilLen] = useState('90'); 
+  const [coilCost, setCoilCost] = useState('');
 
   const handleImage = (e) => {
     const file = e.target.files[0];
@@ -523,20 +523,43 @@ function ItemModal({ user, onClose, initialData }) {
     } else if (file) alert("Image too large (Max 80KB)");
   };
 
-  const generateDesc = async () => {
-    if (!data.name) return alert("Enter name first");
-    setLoading(true);
-    const desc = await callGeminiAPI(`Short product description (20 words) for: ${data.name}, Category: ${data.category}. No markdown.`);
-    setData(p => ({ ...p, description: desc }));
-    setLoading(false);
+  const applyCoil = () => {
+    if (!coilQty || !coilLen || !coilCost) return;
+    const totalMeters = parseFloat(coilQty) * parseFloat(coilLen);
+    const currentQ = data.quantity || 0;
+    setData({ 
+      ...data, 
+      quantity: currentQ + totalMeters,
+      isWire: true 
+    });
+    alert(`Added ${totalMeters} meters to stock.`);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     try {
-      if (initialData) await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'inventory', initialData.id), data);
-      else await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'inventory'), data);
+      if (initialData) {
+        // Check for changes to log history
+        if (initialData.quantity !== data.quantity) {
+           const diff = data.quantity - initialData.quantity;
+           const type = diff > 0 ? 'in' : 'out';
+           const log = {
+             itemId: initialData.id, itemName: data.name, type, quantity: Math.abs(diff), priceAtTime: data.price, date: serverTimestamp(),
+             note: "Manual Edit Correction"
+           };
+           await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'transactions'), log);
+           // Sync Edit History to Sheet
+           autoSyncToSheet(googleToken, sheetId, [new Date().toISOString(), 'Edit-Correction', data.name, type, Math.abs(diff), data.price, 'Correction']);
+        }
+        await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'inventory', initialData.id), data);
+      } else {
+        await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'inventory'), data);
+        if (data.quantity > 0) {
+           const row = [new Date().toISOString(), 'Initial-Add', data.name, 'in', data.quantity, data.price, data.category];
+           autoSyncToSheet(googleToken, sheetId, row);
+        }
+      }
       onClose();
     } catch (e) { alert("Error saving"); }
     setLoading(false);
@@ -548,17 +571,41 @@ function ItemModal({ user, onClose, initialData }) {
         <h3 className="text-xl font-bold text-white mb-4">{initialData ? 'Edit' : 'Add'} Item</h3>
         <form onSubmit={handleSubmit} className="space-y-4">
           <input className="w-full bg-slate-700 border border-slate-600 rounded p-2 text-white" placeholder="Item Name" required value={data.name} onChange={e => setData({...data, name: e.target.value})} />
+          
           <div className="grid grid-cols-2 gap-4">
-            <input className="bg-slate-700 border border-slate-600 rounded p-2 text-white" placeholder="Category" required value={data.category} onChange={e => setData({...data, category: e.target.value})} />
-            <input type="number" className="bg-slate-700 border border-slate-600 rounded p-2 text-white" placeholder="Price" required value={data.price} onChange={e => setData({...data, price: Number(e.target.value)})} />
+            <input className="bg-slate-700 border border-slate-600 rounded p-2 text-white" placeholder="Category (e.g. Wire)" required value={data.category} onChange={e => setData({...data, category: e.target.value})} />
+            <input type="number" className="bg-slate-700 border border-slate-600 rounded p-2 text-white" placeholder="Selling Price" required value={data.price} onChange={e => setData({...data, price: Number(e.target.value)})} />
           </div>
+
+          <div className="flex items-center space-x-2 mb-2">
+             <input type="checkbox" id="isWire" checked={data.isWire} onChange={e => setData({...data, isWire: e.target.checked})} className="w-4 h-4"/>
+             <label htmlFor="isWire" className="text-white text-sm">This is a Wire/Cable (Sold by Meter)</label>
+          </div>
+
+          {data.isWire && (
+            <div className="bg-slate-900 p-3 rounded border border-slate-600 mb-4">
+               <div className="text-xs text-slate-400 mb-2 flex items-center gap-1"><Ruler size={12}/> Bulk / Coil Calculator (Adds to Stock)</div>
+               <div className="flex gap-2 mb-2">
+                  <input placeholder="No. of Coils" type="number" className="w-1/3 bg-slate-800 border border-slate-700 rounded p-1 text-white text-sm" value={coilQty} onChange={e => setCoilQty(e.target.value)}/>
+                  <input placeholder="Length/Coil (m)" type="number" className="w-1/3 bg-slate-800 border border-slate-700 rounded p-1 text-white text-sm" value={coilLen} onChange={e => setCoilLen(e.target.value)}/>
+                  <input placeholder="Cost/Coil" type="number" className="w-1/3 bg-slate-800 border border-slate-700 rounded p-1 text-white text-sm" value={coilCost} onChange={e => setCoilCost(e.target.value)}/>
+               </div>
+               <button type="button" onClick={applyCoil} className="w-full bg-blue-600 text-white text-xs py-1 rounded hover:bg-blue-500">Calculate & Add Meters to Stock</button>
+            </div>
+          )}
+
           <div>
-            <button type="button" onClick={generateDesc} className="text-xs bg-indigo-600 px-2 py-1 rounded text-white mb-1">Auto-Write Desc ✨</button>
-            <textarea className="w-full bg-slate-700 border border-slate-600 rounded p-2 text-white h-20" value={data.description} onChange={e => setData({...data, description: e.target.value})} />
+            <textarea className="w-full bg-slate-700 border border-slate-600 rounded p-2 text-white h-20" placeholder="Description..." value={data.description} onChange={e => setData({...data, description: e.target.value})} />
           </div>
           <div className="grid grid-cols-2 gap-4">
-            <input type="number" className="bg-slate-700 border border-slate-600 rounded p-2 text-white" placeholder="Qty" required value={data.quantity} onChange={e => setData({...data, quantity: Number(e.target.value)})} />
-            <input type="number" className="bg-slate-700 border border-slate-600 rounded p-2 text-white" placeholder="Min Alert" value={data.minStock} onChange={e => setData({...data, minStock: Number(e.target.value)})} />
+            <div>
+               <label className="text-xs text-slate-400">Current Stock ({data.isWire ? 'Meters' : 'Pieces'})</label>
+               <input type="number" className="bg-slate-700 border border-slate-600 rounded p-2 text-white w-full" placeholder="Qty" required value={data.quantity} onChange={e => setData({...data, quantity: Number(e.target.value)})} />
+            </div>
+            <div>
+               <label className="text-xs text-slate-400">Low Stock Alert</label>
+               <input type="number" className="bg-slate-700 border border-slate-600 rounded p-2 text-white w-full" placeholder="Min Alert" value={data.minStock} onChange={e => setData({...data, minStock: Number(e.target.value)})} />
+            </div>
           </div>
           <input type="file" accept="image/*" onChange={handleImage} className="text-sm text-slate-400" />
           <div className="flex gap-2">
@@ -571,25 +618,58 @@ function ItemModal({ user, onClose, initialData }) {
   );
 }
 
-function BillingView({ user, inventory, storeProfile }) {
+function BillingView({ user, inventory, storeProfile, googleToken }) {
   const [cart, setCart] = useState([]);
   const [search, setSearch] = useState('');
   const [checkout, setCheckout] = useState(false);
   const [invoice, setInvoice] = useState(null);
   const [custName, setCustName] = useState('');
-  const [tax, setTax] = useState(false);
+  const [taxRate, setTaxRate] = useState(0);
   const [paid, setPaid] = useState('');
+  const [viewHistory, setViewHistory] = useState(false);
+  const [invoices, setInvoices] = useState([]);
+
+  useEffect(() => {
+    if (!user) return;
+    const q = query(collection(db, 'artifacts', appId, 'users', user.uid, 'invoices'), orderBy('date', 'desc'));
+    const unsub = onSnapshot(q, (snap) => {
+      setInvoices(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+    return () => unsub();
+  }, [user]);
 
   const filtered = inventory.filter(i => i.name.toLowerCase().includes(search.toLowerCase()));
-  const total = cart.reduce((s, i) => s + (i.price * i.qty), 0);
-  const taxAmt = tax ? total * 0.18 : 0;
-  const grandTotal = total + taxAmt;
+  const subtotal = cart.reduce((s, i) => s + (i.totalPrice), 0);
+  const taxAmt = subtotal * (taxRate / 100);
+  const grandTotal = subtotal + taxAmt;
 
   const addToCart = (item) => {
-    const exist = cart.find(c => c.id === item.id);
-    if (exist && exist.qty >= item.quantity) return alert("Stock limit");
-    if (!exist && item.quantity <= 0) return alert("Out of stock");
-    setCart(exist ? cart.map(c => c.id === item.id ? {...c, qty: c.qty + 1} : c) : [...cart, {...item, qty: 1}]);
+    const newItem = {
+       ...item,
+       cartQty: 1,
+       selectedUnit: item.isWire ? 'm' : 'pc',
+       unitMultiplier: 1,
+       totalPrice: item.price
+    };
+    setCart([...cart, newItem]);
+  };
+
+  const updateCartItem = (index, field, value) => {
+    const newCart = [...cart];
+    const item = newCart[index];
+
+    if (field === 'selectedUnit') {
+       item.selectedUnit = value;
+       if (value === 'm') item.unitMultiplier = 1;
+       if (value === 'ft') item.unitMultiplier = 0.3048; 
+       if (value === 'yd') item.unitMultiplier = 0.9144; 
+    } 
+    else if (field === 'cartQty') {
+       item.cartQty = Number(value);
+    }
+
+    item.totalPrice = (item.cartQty * item.unitMultiplier) * item.price;
+    setCart(newCart);
   };
 
   const handlePay = async () => {
@@ -598,59 +678,139 @@ function BillingView({ user, inventory, storeProfile }) {
     const invData = {
       invoiceId: invRef.id.slice(0, 8).toUpperCase(),
       customerName: custName || 'Walk-in',
-      items: cart, subtotal: total, taxAmount: taxAmt, totalAmount: grandTotal, date: serverTimestamp(),
+      items: cart, subtotal, taxAmount: taxAmt, taxRate, totalAmount: grandTotal, date: serverTimestamp(),
       storeSnapshot: storeProfile
     };
     batch.set(invRef, invData);
     
     cart.forEach(item => {
       const iRef = doc(db, 'artifacts', appId, 'users', user.uid, 'inventory', item.id);
+      const deduction = item.cartQty * item.unitMultiplier;
       const curr = inventory.find(i => i.id === item.id).quantity;
-      batch.update(iRef, { quantity: curr - item.qty });
+      batch.update(iRef, { quantity: curr - deduction });
+      
       batch.set(doc(collection(db, 'artifacts', appId, 'users', user.uid, 'transactions')), {
-        itemId: item.id, itemName: item.name, type: 'out', quantity: item.qty, priceAtTime: item.price, date: serverTimestamp(), invoiceId: invData.invoiceId
+        itemId: item.id, itemName: item.name, type: 'out', quantity: deduction, priceAtTime: item.price, date: serverTimestamp(), invoiceId: invData.invoiceId
       });
+
+      const row = [new Date().toISOString(), invData.invoiceId, item.name, 'out', deduction, item.price, 'Sale'];
+      autoSyncToSheet(googleToken, storeProfile?.sheetId, row);
     });
 
     await batch.commit();
     setInvoice({...invData, date: new Date()});
-    setCart([]); setCheckout(false);
+    setCart([]); setCheckout(false); setCustName(''); setPaid('');
   };
 
   return (
-    <div className="max-w-7xl mx-auto h-full flex flex-col lg:flex-row gap-6">
-      <div className="flex-1 bg-slate-800 rounded-xl border border-slate-700 flex flex-col overflow-hidden">
-        <div className="p-4 border-b border-slate-700">
-           <input className="bg-slate-900 border border-slate-700 rounded-lg p-3 text-white w-full" placeholder="Search Item..." value={search} onChange={e => setSearch(e.target.value)} />
-        </div>
-        <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 md:grid-cols-3 gap-3 content-start">
-          {filtered.map(item => (
-            <button key={item.id} onClick={() => addToCart(item)} className="bg-slate-700 p-3 rounded-lg text-left hover:bg-slate-600">
-              <div className="font-bold text-white text-sm truncate">{item.name}</div>
-              <div className="text-yellow-500 font-bold text-xs">₹{item.price}</div>
-              <div className="text-slate-400 text-[10px]">Stock: {item.quantity}</div>
-            </button>
-          ))}
-        </div>
+    <div className="max-w-7xl mx-auto h-full flex flex-col gap-6">
+      <div className="flex justify-between items-center">
+        <h2 className="text-2xl font-bold text-white">Billing / POS</h2>
+        <button 
+           onClick={() => setViewHistory(!viewHistory)}
+           className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg border border-slate-700 flex items-center gap-2"
+        >
+          {viewHistory ? <ShoppingCart size={16}/> : <History size={16}/>}
+          {viewHistory ? 'Back to POS' : 'Bill History'}
+        </button>
       </div>
 
-      <div className="w-full lg:w-96 bg-slate-800 rounded-xl border border-slate-700 flex flex-col h-[600px] lg:h-auto">
-         <div className="p-4 bg-slate-900 border-b border-slate-700 font-bold text-white">Cart ({cart.length})</div>
-         <div className="flex-1 overflow-y-auto p-2 space-y-2">
-            {cart.map(item => (
-              <div key={item.id} className="bg-slate-700/50 p-2 rounded flex justify-between items-center">
-                <div className="text-white text-sm w-32 truncate">{item.name}</div>
-                <div className="text-slate-400 text-xs">₹{item.price} x {item.qty}</div>
-                <button onClick={() => setCart(cart.filter(c => c.id !== item.id))} className="text-red-400"><Trash2 size={16}/></button>
-              </div>
-            ))}
-         </div>
-         <div className="p-4 bg-slate-900 border-t border-slate-700 space-y-2">
-            <label className="flex items-center gap-2 text-xs text-slate-400"><input type="checkbox" checked={tax} onChange={e => setTax(e.target.checked)}/> Add 18% GST</label>
-            <div className="flex justify-between text-white font-bold text-lg"><span>Total</span><span>₹{grandTotal.toFixed(2)}</span></div>
-            <button onClick={() => setCheckout(true)} disabled={cart.length===0} className="w-full bg-green-600 py-3 rounded font-bold text-white disabled:opacity-50">Checkout</button>
-         </div>
-      </div>
+      {viewHistory ? (
+        <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+          <div className="p-4 border-b border-slate-700 font-bold text-white">Invoice History</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm text-slate-300">
+              <thead className="bg-slate-900 text-slate-400 uppercase">
+                <tr><th className="p-4">ID</th><th className="p-4">Date</th><th className="p-4">Customer</th><th className="p-4 text-right">Total</th><th className="p-4 text-center">Action</th></tr>
+              </thead>
+              <tbody className="divide-y divide-slate-700">
+                {invoices.map(inv => (
+                  <tr key={inv.id} className="hover:bg-slate-700/50">
+                    <td className="p-4 font-mono">{inv.invoiceId}</td>
+                    <td className="p-4">{inv.date ? new Date(inv.date.seconds * 1000).toLocaleDateString() : '-'}</td>
+                    <td className="p-4">{inv.customerName}</td>
+                    <td className="p-4 text-right font-bold text-green-400">₹{inv.totalAmount.toFixed(2)}</td>
+                    <td className="p-4 text-center">
+                      <button onClick={() => setInvoice({ ...inv, date: new Date(inv.date.seconds * 1000) })} className="text-yellow-500 hover:text-yellow-400"><Printer size={18} /></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col lg:flex-row gap-6 h-[calc(100vh-180px)]">
+          <div className="flex-1 bg-slate-800 rounded-xl border border-slate-700 flex flex-col overflow-hidden">
+            <div className="p-4 border-b border-slate-700">
+               <input className="bg-slate-900 border border-slate-700 rounded-lg p-3 text-white w-full" placeholder="Search Item..." value={search} onChange={e => setSearch(e.target.value)} />
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 md:grid-cols-3 gap-3 content-start">
+              {filtered.map(item => (
+                <button key={item.id} onClick={() => addToCart(item)} className="bg-slate-700 p-3 rounded-lg text-left hover:bg-slate-600">
+                  <div className="font-bold text-white text-sm truncate">{item.name}</div>
+                  <div className="text-yellow-500 font-bold text-xs">₹{item.price} / {item.isWire ? 'm' : 'pc'}</div>
+                  <div className="text-slate-400 text-[10px]">Stock: {item.quantity.toFixed(1)}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="w-full lg:w-96 bg-slate-800 rounded-xl border border-slate-700 flex flex-col h-[600px] lg:h-auto">
+             <div className="p-4 bg-slate-900 border-b border-slate-700 font-bold text-white">Cart ({cart.length})</div>
+             <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                {cart.map((item, idx) => (
+                  <div key={idx} className="bg-slate-700/50 p-2 rounded flex flex-col gap-2">
+                    <div className="flex justify-between items-center">
+                       <div className="text-white text-sm font-medium">{item.name}</div>
+                       <button onClick={() => setCart(cart.filter((_, i) => i !== idx))} className="text-red-400"><Trash2 size={16}/></button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                       <input 
+                         type="number" 
+                         className="w-16 bg-slate-900 border border-slate-600 rounded p-1 text-white text-xs"
+                         value={item.cartQty}
+                         onChange={e => updateCartItem(idx, 'cartQty', e.target.value)}
+                       />
+                       {item.isWire ? (
+                         <select 
+                           className="bg-slate-900 border border-slate-600 rounded p-1 text-white text-xs"
+                           value={item.selectedUnit}
+                           onChange={e => updateCartItem(idx, 'selectedUnit', e.target.value)}
+                         >
+                           <option value="m">Meter</option>
+                           <option value="ft">Feet</option>
+                           <option value="yd">Yard</option>
+                         </select>
+                       ) : <span className="text-xs text-slate-400">pcs</span>}
+                       <div className="ml-auto text-yellow-500 font-bold text-sm">₹{item.totalPrice.toFixed(2)}</div>
+                    </div>
+                  </div>
+                ))}
+             </div>
+             <div className="p-4 bg-slate-900 border-t border-slate-700 space-y-2">
+                <div className="flex items-center justify-between text-sm text-slate-300">
+                   <span>Tax Slab:</span>
+                   <select 
+                     value={taxRate} 
+                     onChange={e => setTaxRate(Number(e.target.value))}
+                     className="bg-slate-700 border border-slate-600 rounded p-1 text-white text-xs"
+                   >
+                     <option value={0}>No Tax (0%)</option>
+                     <option value={5}>GST 5%</option>
+                     <option value={12}>GST 12%</option>
+                     <option value={18}>GST 18%</option>
+                     <option value={28}>GST 28%</option>
+                   </select>
+                </div>
+                <div className="flex justify-between text-slate-400 text-sm"><span>Subtotal</span><span>₹{subtotal.toFixed(2)}</span></div>
+                <div className="flex justify-between text-slate-400 text-sm"><span>Tax</span><span>₹{taxAmt.toFixed(2)}</span></div>
+                <div className="flex justify-between text-white font-bold text-lg pt-2 border-t border-slate-700"><span>Total</span><span>₹{grandTotal.toFixed(2)}</span></div>
+                <button onClick={() => setCheckout(true)} disabled={cart.length===0} className="w-full bg-green-600 py-3 rounded font-bold text-white disabled:opacity-50">Checkout</button>
+             </div>
+          </div>
+        </div>
+      )}
 
       {checkout && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
@@ -675,13 +835,18 @@ function BillingView({ user, inventory, storeProfile }) {
                  <div className="text-center border-b border-black pb-4 mb-4">
                     <h1 className="text-xl font-bold">{invoice.storeSnapshot?.storeName}</h1>
                     <p>{invoice.storeSnapshot?.address}</p>
+                    {invoice.storeSnapshot?.gstin && <p>GSTIN: {invoice.storeSnapshot.gstin}</p>}
                  </div>
                  <div className="mb-4">Inv: {invoice.invoiceId}<br/>Date: {invoice.date.toLocaleDateString()}<br/>Cust: {invoice.customerName}</div>
                  <table className="w-full mb-4">
                    <thead><tr className="border-b border-black"><th className="text-left">Item</th><th className="text-right">Amt</th></tr></thead>
-                   <tbody>{invoice.items.map((i,k) => <tr key={k}><td>{i.name} x{i.qty}</td><td className="text-right">{(i.price*i.qty).toFixed(2)}</td></tr>)}</tbody>
+                   <tbody>{invoice.items.map((i,k) => <tr key={k}><td>{i.name} ({i.cartQty} {i.selectedUnit})</td><td className="text-right">{i.totalPrice.toFixed(2)}</td></tr>)}</tbody>
                  </table>
-                 <div className="border-t border-black pt-2 text-right font-bold text-lg">Total: ₹{invoice.totalAmount.toFixed(2)}</div>
+                 <div className="border-t border-black pt-2 text-right">
+                    <div>Sub: ₹{invoice.subtotal?.toFixed(2)}</div>
+                    <div>Tax ({invoice.taxRate}%): ₹{invoice.taxAmount?.toFixed(2)}</div>
+                    <div className="font-bold text-lg mt-1">Total: ₹{invoice.totalAmount.toFixed(2)}</div>
+                 </div>
               </div>
               <button onClick={() => window.print()} className="w-full bg-black text-white py-2 mt-4 rounded">Print Invoice</button>
            </div>
@@ -706,7 +871,7 @@ function TransactionsView({ transactions }) {
        <div className="bg-slate-800 rounded-xl overflow-hidden">
           <table className="w-full text-left text-sm text-slate-300">
              <thead className="bg-slate-900 text-slate-400"><tr><th className="p-3">Date</th><th className="p-3">Item</th><th className="p-3">Qty</th></tr></thead>
-             <tbody>{transactions.map(t => <tr key={t.id} className="border-t border-slate-700"><td className="p-3">{new Date(t.date?.seconds*1000).toLocaleDateString()}</td><td className="p-3">{t.itemName}</td><td className={`p-3 font-bold ${t.type==='in'?'text-green-400':'text-red-400'}`}>{t.type==='in'?'+':'-'}{t.quantity}</td></tr>)}</tbody>
+             <tbody>{transactions.map(t => <tr key={t.id} className="border-t border-slate-700"><td className="p-3">{new Date(t.date?.seconds*1000).toLocaleDateString()}</td><td className="p-3">{t.itemName}</td><td className={`p-3 font-bold ${t.type==='in'?'text-green-400':'text-red-400'}`}>{t.type==='in'?'+':'-'}{t.quantity.toFixed(1)}</td></tr>)}</tbody>
           </table>
        </div>
     </div>
@@ -749,9 +914,27 @@ function SettingsView({ user, storeProfile, setStoreProfile, googleToken }) {
          <form onSubmit={save} className="space-y-4">
             <input className="w-full bg-slate-700 border border-slate-600 rounded p-2 text-white" placeholder="Store Name" value={data.storeName||''} onChange={e=>setData({...data, storeName:e.target.value})}/>
             <textarea className="w-full bg-slate-700 border border-slate-600 rounded p-2 text-white" placeholder="Address" value={data.address||''} onChange={e=>setData({...data, address:e.target.value})}/>
+            <div className="grid grid-cols-2 gap-4">
+               <input className="w-full bg-slate-700 border border-slate-600 rounded p-2 text-white" placeholder="Phone" value={data.phone||''} onChange={e=>setData({...data, phone:e.target.value})}/>
+               <input className="w-full bg-slate-700 border border-slate-600 rounded p-2 text-white" placeholder="GSTIN" value={data.gstin||''} onChange={e=>setData({...data, gstin:e.target.value})}/>
+            </div>
             <button className="bg-yellow-500 px-4 py-2 rounded font-bold w-full">Save Profile</button>
          </form>
       </div>
+      
+      <div className="bg-slate-800 p-6 rounded-xl border border-slate-700">
+         <h3 className="text-white font-bold mb-4 flex items-center gap-2"><SheetIcon className="text-green-500"/> Google Sheets Auto-Sync</h3>
+         <p className="text-sm text-slate-400 mb-4">To enable automatic backup of sales and inventory, paste your Google Sheet ID below.</p>
+         <div className="space-y-2">
+            <input className="w-full bg-slate-700 border border-slate-600 rounded p-2 text-white text-xs font-mono" placeholder="Sheet ID (e.g. 1BxiMVs0...)" value={data.sheetId||''} onChange={e=>setData({...data, sheetId:e.target.value})}/>
+            <button onClick={save} className="bg-slate-600 text-white px-4 py-1 rounded text-sm">Save Sheet ID</button>
+         </div>
+         <div className="mt-4 p-3 bg-slate-900 rounded text-sm">
+            <span className="text-slate-400">Status: </span>
+            <span className={googleToken ? "text-green-400 font-bold" : "text-red-400 font-bold"}>{googleToken ? "Connected & Auto-Sync Active" : "Not Connected (Re-login)"}</span>
+         </div>
+      </div>
+
       <div className="bg-slate-800 p-6 rounded-xl border border-slate-700">
          <h3 className="text-white font-bold mb-4 flex items-center gap-2"><Smartphone className="text-blue-500"/> Install App</h3>
          <p className="text-slate-400 text-sm mb-4">To install on your phone:</p>
